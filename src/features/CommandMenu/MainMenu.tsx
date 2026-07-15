@@ -1,21 +1,10 @@
-import { SOCIAL_URL } from '@lobechat/business-const';
-import { DiscordIcon, GithubIcon } from '@lobehub/ui/icons';
 import { Command } from 'cmdk';
-import {
-  Bot,
-  FeatherIcon,
-  FilePen,
-  LibraryBig,
-  MessageSquarePlusIcon,
-  Monitor,
-  Star,
-} from 'lucide-react';
+import { Bot, FilePen, LibraryBig, MessageSquarePlusIcon, Monitor } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { openFeedbackModal } from '@/components/FeedbackModal';
 import { getNavigableRoutes, getRouteById } from '@/config/routes';
-import { FEEDBACK } from '@/const/url';
 import { usePermission } from '@/hooks/usePermission';
 import { useChatStore } from '@/store/chat';
 import { topicSelectors } from '@/store/chat/selectors';
@@ -40,7 +29,6 @@ const MainMenu = memo(() => {
     handleCreateLibrary,
     handleCreatePage,
     handleNavigate,
-    handleExternalLink,
     handleCreateAgentTeam,
   } = useCommandMenu();
 
@@ -148,48 +136,6 @@ const MainMenu = memo(() => {
             )
           );
         })}
-      </Command.Group>
-
-      <Command.Group heading={t('cmdk.about')}>
-        <CommandItem
-          icon={<FeatherIcon />}
-          keywords={t('cmdk.keywords.contactUs').split(' ')}
-          value="contact-via-email"
-          onSelect={() => {
-            // Close the palette through the context handler (which runs the exit
-            // animation and clears the local `isVisible` state) before opening the
-            // modal. `openFeedbackModal` only flips the store flag, which alone
-            // doesn't unmount the palette — so without this it stays on screen.
-            onClose();
-            openFeedbackModal();
-          }}
-        >
-          {t('cmdk.contactUs')}
-        </CommandItem>
-        <CommandItem
-          icon={<GithubIcon />}
-          keywords={t('cmdk.keywords.submitIssue').split(' ')}
-          value="submit-issue"
-          onSelect={() => handleExternalLink(FEEDBACK)}
-        >
-          {t('cmdk.submitIssue')}
-        </CommandItem>
-        <CommandItem
-          icon={<Star />}
-          keywords={t('cmdk.keywords.starGitHub').split(' ')}
-          value="star-github"
-          onSelect={() => handleExternalLink(SOCIAL_URL.github)}
-        >
-          {t('cmdk.starOnGitHub')}
-        </CommandItem>
-        <CommandItem
-          icon={<DiscordIcon />}
-          keywords={t('cmdk.keywords.discord').split(' ')}
-          value="discord"
-          onSelect={() => handleExternalLink(SOCIAL_URL.discord)}
-        >
-          {t('cmdk.communitySupport')}
-        </CommandItem>
       </Command.Group>
     </>
   );

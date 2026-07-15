@@ -240,7 +240,7 @@ If a new contributor appears who is not on this list, treat them as community by
 ```md
 # 🚀 LobeHub Release (<YYYYMMDD>)
 
-**Release Date:** <Month DD, YYYY>  
+**Release Date:** <Month DD, YYYY>
 **Since <Previous Version>:** <N merged PRs> · <N resolved issues> · <N contributors>
 
 > <One release thesis sentence: what this release unlocks in practice.>

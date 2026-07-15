@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { DEFAULT_INBOX_AVATAR, DEFAULT_INBOX_TITLE, INBOX_SESSION_ID } from '@lobechat/const';
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
+import { DEFAULT_INBOX_AVATAR, INBOX_SESSION_ID } from '@lobechat/const';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../core/getTestDB';
@@ -74,7 +75,7 @@ describe('AgentModel.getAgentAvatarsByIds', () => {
     expect(result[0].id).toBe('agent-mine');
   });
 
-  it('should fallback to LobeAI defaults for inbox agent without avatar/title', async () => {
+  it('should fallback to branded defaults for inbox agent without avatar/title', async () => {
     await serverDB.insert(agents).values({
       avatar: null,
       backgroundColor: null,
@@ -92,7 +93,7 @@ describe('AgentModel.getAgentAvatarsByIds', () => {
       avatar: DEFAULT_INBOX_AVATAR,
       backgroundColor: null,
       id: 'agent-inbox',
-      title: DEFAULT_INBOX_TITLE,
+      title: BRANDING_LOBE_AI_NAME,
     });
   });
 

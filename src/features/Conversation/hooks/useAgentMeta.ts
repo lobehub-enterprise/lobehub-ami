@@ -1,3 +1,4 @@
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { type MetaData } from '@lobechat/types';
 import { useMemo } from 'react';
 
@@ -5,8 +6,6 @@ import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 
 import { contextSelectors, useConversationStore } from '../store';
-
-const LOBE_AI_TITLE = 'Lobe AI';
 
 /**
  * Hook to get agent meta data for a specific agent or the current conversation.
@@ -31,7 +30,7 @@ export const useAgentMeta = (messageAgentId?: string | null): MetaData => {
 
     if (isBuiltinAgent) {
       // Use DB-stored title if customized (e.g. via onboarding), otherwise fallback to Lobe AI
-      return { ...agentMeta, title: agentMeta.title || LOBE_AI_TITLE };
+      return { ...agentMeta, title: agentMeta.title || BRANDING_LOBE_AI_NAME };
     }
 
     return agentMeta;

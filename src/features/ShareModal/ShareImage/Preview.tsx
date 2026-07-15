@@ -1,3 +1,4 @@
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { type ConversationContext, type UIChatMessage } from '@lobechat/types';
 import { ModelTag } from '@lobehub/icons';
 import { Avatar, Flexbox, Markdown, Text } from '@lobehub/ui';
@@ -78,7 +79,9 @@ const Preview = memo<PreviewProps>(
     });
 
     const displayTitle =
-      (isHeaderInbox ?? isInbox) ? 'Lobe AI' : headerMeta?.title || title || currentTitle;
+      (isHeaderInbox ?? isInbox)
+        ? BRANDING_LOBE_AI_NAME
+        : headerMeta?.title || title || currentTitle;
     const displayAvatar = headerMeta?.avatar || currentAvatar;
     const displayBackgroundColor = headerMeta?.backgroundColor || currentBackgroundColor;
     const displayModel = headerModel || currentModel;

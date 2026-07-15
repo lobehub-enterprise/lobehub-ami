@@ -1,5 +1,6 @@
 'use client';
 
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { DEFAULT_INBOX_AVATAR } from '@lobechat/const';
 import { nanoid } from '@lobechat/utils';
 import { type IEditor } from '@lobehub/editor';
@@ -36,7 +37,9 @@ export const useAskCopilotItem = (editor: IEditor | undefined): ChatInputActions
   return useMemo(() => {
     if (!editor) return [];
 
-    const label = t('cmdk.askLobeAI');
+    const label = t('cmdk.askLobeAI')
+      .replaceAll('Lobe AI', BRANDING_LOBE_AI_NAME)
+      .replaceAll('LobeAI', BRANDING_LOBE_AI_NAME);
 
     return [
       {

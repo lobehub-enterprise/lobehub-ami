@@ -1,4 +1,5 @@
-import { AGENT_CHAT_URL } from '@lobechat/const';
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
+import { AGENT_CHAT_URL, INBOX_SESSION_ID } from '@lobechat/const';
 import { BarList } from '@lobehub/charts';
 import { ActionIcon, Avatar } from '@lobehub/ui';
 import { MaximizeIcon } from 'lucide-react';
@@ -50,9 +51,11 @@ export const AssistantsRank = memo<{ mobile?: boolean }>(({ mobile }) => {
       link,
       name: (
         <Link href={link} style={{ color: 'inherit' }}>
-          {isInbox
-            ? t('inbox.title', { ns: 'chat' })
-            : item.title || t('defaultAgent', { ns: 'chat' })}
+          {item.title
+            ? item.id === INBOX_SESSION_ID
+              ? BRANDING_LOBE_AI_NAME
+              : item.title
+            : t('defaultAgent', { ns: 'chat' })}
         </Link>
       ),
       value: item.count,

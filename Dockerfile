@@ -82,15 +82,23 @@ RUN set -e && \
         npm config set registry "https://registry.npmmirror.com/"; \
         echo 'canvas_binary_host_mirror=https://npmmirror.com/mirrors/canvas' >> .npmrc; \
     fi && \
+    package_manager="$(node -p "require('./package.json').packageManager")" && \
     export COREPACK_NPM_REGISTRY=$(npm config get registry | sed 's/\/$//') && \
     npm i -g corepack@latest && \
     corepack enable && \
-    corepack use $(sed -n 's/.*"packageManager": "\(.*\)".*/\1/p' package.json) && \
-    pnpm i && \
+    corepack prepare "${package_manager}" --activate && \
+    pnpm i --node-linker=hoisted && \
     mkdir -p /deps && \
     cd /deps && \
-    echo '{"name":"deps","private":true}' > package.json && \
-    pnpm add pg drizzle-orm
+    printf '{"name":"deps","version":"1.0.0","private":true,"packageManager":"%s","type":"module"}\n' "${package_manager}" > package.json && \
+    pnpm add --node-linker=hoisted pg drizzle-orm && \
+    mkdir -p /deps/runtime-node_modules && \
+    find /deps/node_modules \
+        -mindepth 1 \
+        -maxdepth 1 \
+        ! -name '.bin' \
+        ! -name '.pnpm' \
+        -exec cp -aL {} /deps/runtime-node_modules/ \;
 
 COPY . .
 
@@ -117,10 +125,8 @@ COPY --from=builder /app/packages/database/migrations /app/migrations
 COPY --from=builder /app/scripts/migrateServerDB/docker.cjs /app/docker.cjs
 COPY --from=builder /app/scripts/migrateServerDB/errorHint.js /app/errorHint.js
 
-# copy dependencies
-COPY --from=builder /deps/node_modules/.pnpm /app/node_modules/.pnpm
-COPY --from=builder /deps/node_modules/pg /app/node_modules/pg
-COPY --from=builder /deps/node_modules/drizzle-orm /app/node_modules/drizzle-orm
+# copy migration dependencies
+COPY --from=builder /deps/runtime-node_modules/. /app/node_modules/
 
 # Copy server launcher and shared scripts
 COPY --from=builder /app/scripts/serverLauncher/startServer.js /app/startServer.js

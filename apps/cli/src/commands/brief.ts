@@ -127,7 +127,9 @@ export function registerBriefCommand(program: Command) {
         } else {
           console.log(pc.dim('Actions:'));
           console.log(pc.dim(`  lh brief resolve ${b.id}                   # Approve`));
-          console.log(pc.dim(`  lh brief resolve ${b.id} --reply "revision notes"  # Request revision`));
+          console.log(
+            pc.dim(`  lh brief resolve ${b.id} --reply "revision notes"  # Request revision`),
+          );
         }
       } else if ((b as any).resolvedComment) {
         console.log(`${pc.dim('Comment:')} ${(b as any).resolvedComment}`);

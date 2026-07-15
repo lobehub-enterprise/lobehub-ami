@@ -1,0 +1,316 @@
+name: Release AMI Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment that provides LOBEHUB_TOWER_URL and LOBEHUB_TOWER_INTEGRATION_TOKEN.
+        required: true
+        default: beta
+        type: choice
+        options:
+          - beta
+          - production
+      version:
+        description: Optional semver override. Production defaults to package.json version.
+        required: false
+        type: string
+      changelog:
+        description: Optional production changelog body. When empty, a fallback changelog is generated.
+        required: false
+        type: string
+      changelog_summary:
+        description: Optional production changelog summary. Defaults to the changelog first line or release version.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.environment || 'beta' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build artifact
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      artifact: ${{ steps.meta.outputs.artifact }}
+      channel: ${{ steps.meta.outputs.channel }}
+      digest: ${{ steps.build.outputs.digest }}
+      environment: ${{ steps.meta.outputs.environment }}
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      image_refs: ${{ steps.meta.outputs.image_refs }}
+      product: ${{ steps.meta.outputs.product }}
+      version: ${{ steps.meta.outputs.version }}
+    env:
+      AMI_IMAGE_REPOSITORY: ghcr.io/lobehub-enterprise/lobehub-ami
+      AMI_RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+      AMI_RELEASE_PRODUCT: lobehub-ami
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Resolve AMI release inputs
+        env:
+          AMI_RELEASE_INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$AMI_RELEASE_INPUT_VERSION" ]; then
+            input_version="$(printf '%s' "$AMI_RELEASE_INPUT_VERSION" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ "$AMI_RELEASE_ENVIRONMENT" == "production" ]]; then
+              if [[ ! "$input_version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Production version must match semver X.Y.Z or vX.Y.Z"
+                exit 1
+              fi
+              input_version="${input_version#v}"
+            fi
+            export AMI_RELEASE_VERSION="$input_version"
+          fi
+
+          bun run ami:release:resolve-image
+
+          resolve_env() {
+            sed -n "s/^$1=//p" "$GITHUB_ENV" | tail -n 1
+          }
+
+          resolved_channel="$(resolve_env AMI_RELEASE_CHANNEL)"
+          resolved_product="$(resolve_env AMI_RELEASE_PRODUCT)"
+          image_repository="$(resolve_env AMI_IMAGE_REPOSITORY)"
+          resolved_version="$(resolve_env AMI_RELEASE_VERSION)"
+
+          case "$resolved_channel" in
+            beta)
+              release_version="${resolved_version#${resolved_product}-}"
+              image_ref="${image_repository}:${release_version}"
+              image_refs="${image_ref}"$'\n'"${image_repository}:beta-latest"
+              ;;
+            production)
+              release_version="${resolved_version#v}"
+              release_version="v${release_version}"
+              image_ref="${image_repository}:${release_version}"
+              image_refs="${image_ref}"
+              ;;
+            *)
+              echo "Invalid AMI release channel: ${resolved_channel}"
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "AMI_ARTIFACT_LOCATOR=${image_ref}"
+            echo "AMI_ARTIFACT_NAME=${release_version}"
+            echo "AMI_IMAGE_REF=${image_ref}"
+            echo "AMI_IMAGE_REFS<<EOF"
+            printf '%s\n' "$image_refs"
+            echo "EOF"
+            echo "AMI_IMAGE_TAG=${release_version}"
+            echo "AMI_RELEASE_VERSION=${release_version}"
+          } >> "$GITHUB_ENV"
+
+      - name: Export artifact metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            echo "artifact=${AMI_ARTIFACT_NAME}"
+            echo "channel=${AMI_RELEASE_CHANNEL}"
+            echo "environment=${AMI_RELEASE_ENVIRONMENT}"
+            echo "image_ref=${AMI_IMAGE_REF}"
+            echo "image_refs<<EOF"
+            printf '%s\n' "$AMI_IMAGE_REFS"
+            echo "EOF"
+            echo "product=${AMI_RELEASE_PRODUCT}"
+            echo "version=${AMI_RELEASE_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          build-args: |
+            SHA=${{ github.sha }}
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image_refs }}
+
+  report:
+    name: Report artifact
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ needs.build.outputs.environment }}
+    env:
+      LOBEHUB_TOWER_INTEGRATION_TOKEN: ${{ secrets.LOBEHUB_TOWER_INTEGRATION_TOKEN }}
+      LOBEHUB_TOWER_URL: ${{ vars.LOBEHUB_TOWER_URL }}
+    steps:
+      - name: Report artifact
+        id: report
+        shell: bash
+        env:
+          ARTIFACT_CHANNEL: ${{ needs.build.outputs.channel }}
+          ARTIFACT_DIGEST: ${{ needs.build.outputs.digest }}
+          ARTIFACT_NAME: ${{ needs.build.outputs.artifact }}
+          ARTIFACT_VERSION: ${{ needs.build.outputs.version }}
+          CHANGELOG_INPUT: ${{ inputs.changelog }}
+          CHANGELOG_SUMMARY_INPUT: ${{ inputs.changelog_summary }}
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          PRODUCT_NAME: ${{ needs.build.outputs.product }}
+          TARGET_ENVIRONMENT: ${{ needs.build.outputs.environment }}
+        run: |
+          set -uo pipefail
+
+          tower_url="$(printf '%s' "${LOBEHUB_TOWER_URL:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          report_url=""
+          report_token="$(printf '%s' "${LOBEHUB_TOWER_INTEGRATION_TOKEN:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+          if [[ -n "$tower_url" ]]; then
+            if [[ "$tower_url" != http://* && "$tower_url" != https://* ]]; then
+              echo "::warning::LOBEHUB_TOWER_URL must start with http:// or https://; skip artifact report."
+              echo "status=skipped_invalid_url" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            report_url="${tower_url%/}/api/v1/products/${PRODUCT_NAME}/artifacts"
+          fi
+
+          if [[ -z "$report_url" || -z "$report_token" ]]; then
+            echo "::warning::LOBEHUB_TOWER_URL or LOBEHUB_TOWER_INTEGRATION_TOKEN is empty for ${TARGET_ENVIRONMENT}; skip artifact report."
+            echo "status=skipped_missing_config" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$report_url" != http://* && "$report_url" != https://* ]]; then
+            echo "::warning::Artifact report URL must start with http:// or https://; skip artifact report."
+            echo "status=skipped_invalid_url" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          payload_path="${RUNNER_TEMP}/artifact-report.json"
+          response_path="${RUNNER_TEMP}/artifact-report-response.txt"
+
+          if ! node <<'NODE' > "$payload_path"
+          const betaLatestImageRef =
+            process.env.ARTIFACT_CHANNEL === 'beta'
+              ? process.env.IMAGE_REF.replace(/:[^/:]+$/, ':beta-latest')
+              : undefined;
+          const aliases = [
+            { alias: process.env.ARTIFACT_VERSION, aliasType: 'release_version' },
+            { alias: process.env.ARTIFACT_CHANNEL, aliasType: 'alias' },
+            { alias: process.env.ARTIFACT_NAME, aliasType: 'retag' },
+          ];
+          if (betaLatestImageRef) {
+            aliases.push({ alias: 'beta-latest', aliasType: 'retag' });
+          }
+
+          const payload = {
+            aliases,
+            artifactKind: 'container_image',
+            digest: process.env.ARTIFACT_DIGEST,
+            locator: process.env.IMAGE_REF,
+            metadataSnapshot: {
+              betaLatestImageRef,
+              environment: process.env.TARGET_ENVIRONMENT,
+              imageRef: process.env.IMAGE_REF,
+              imageTag: process.env.ARTIFACT_NAME,
+              workflowRunUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            },
+            platform: 'linux',
+            arch: 'x64',
+            sourceCommitSha: process.env.GITHUB_SHA,
+            sourceRef: process.env.GITHUB_REF,
+            releaseChannel: process.env.ARTIFACT_CHANNEL,
+            releaseVersion: process.env.ARTIFACT_VERSION,
+            storageProvider: 'oci_registry',
+            workflowRunId: process.env.GITHUB_RUN_ID,
+          };
+          if (process.env.ARTIFACT_CHANNEL === 'production') {
+            const manualContent = process.env.CHANGELOG_INPUT?.trim();
+            const manualSummary = process.env.CHANGELOG_SUMMARY_INPUT?.trim();
+            const fallbackSummary = `Release ${process.env.ARTIFACT_VERSION}`;
+            const fallbackContent = `Release ${process.env.ARTIFACT_VERSION} image ${process.env.IMAGE_REF}.`;
+            const firstContentLine = manualContent
+              ?.split(/\r?\n/)
+              .map((line) => line.trim())
+              .find(Boolean);
+            payload.changelog = {
+              summary: manualSummary || firstContentLine || fallbackSummary,
+              content: manualContent || fallbackContent,
+            };
+          }
+          process.stdout.write(JSON.stringify(payload));
+          NODE
+          then
+            echo "::warning::Failed to build artifact report payload for ${ARTIFACT_VERSION}"
+            echo "status=payload_failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! http_code="$(curl -sS \
+            -o "$response_path" \
+            -w '%{http_code}' \
+            -X POST \
+            -H "authorization: Bearer ${report_token}" \
+            -H "content-type: application/json" \
+            --data @"${payload_path}" \
+            "$report_url")"; then
+            echo "::warning::Artifact report request failed for ${ARTIFACT_VERSION}"
+            echo "status=request_failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+            echo "::warning::Artifact report returned HTTP ${http_code} for ${ARTIFACT_VERSION}"
+            echo "status=http_${http_code}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "status=success_http_${http_code}" >> "$GITHUB_OUTPUT"
+
+      - name: Write summary
+        if: always()
+        shell: bash
+        env:
+          ARTIFACT_CHANNEL: ${{ needs.build.outputs.channel }}
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+        run: |
+          beta_latest_image="n/a"
+          if [[ "$ARTIFACT_CHANNEL" == "beta" ]]; then
+            beta_latest_image="${IMAGE_REF%:*}:beta-latest"
+          fi
+
+          {
+            echo "## Action Summary"
+            echo ""
+            echo "- Project: \`${{ needs.build.outputs.product }}\`"
+            echo "- Environment: \`${{ needs.build.outputs.environment }}\`"
+            echo "- Release version: \`${{ needs.build.outputs.channel }}\`"
+            echo "- Tag: \`${{ needs.build.outputs.version }}\`"
+            echo "- Image: \`${{ needs.build.outputs.image_ref }}\`"
+            echo "- Beta latest image: \`${beta_latest_image}\`"
+            echo "- Digest: \`${{ needs.build.outputs.digest }}\`"
+            echo "- Report result: \`${{ steps.report.outputs.status || 'not_run' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

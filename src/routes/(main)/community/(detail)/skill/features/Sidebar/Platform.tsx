@@ -1,5 +1,6 @@
 'use client';
 
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { AGENT_CHAT_URL, DEFAULT_INBOX_AVATAR } from '@lobechat/const';
 import { Claude, Cline, Cursor, OpenAI } from '@lobehub/icons';
 import {
@@ -198,13 +199,13 @@ const Platform = memo<PlatformProps>(
     const handleUseOnLobeAI = useCallback(() => {
       if (!inboxAgentId) return;
 
-      // Send message to LobeAI
+      // Send message to the default AI assistant
       sendMessage({
         context: { agentId: inboxAgentId },
         message: agentPrompt,
       });
 
-      // Navigate to LobeAI chat session
+      // Navigate to the default AI assistant chat session
       navigate(AGENT_CHAT_URL(inboxAgentId, mobile));
     }, [agentPrompt, inboxAgentId, mobile, navigate, sendMessage]);
 
@@ -261,7 +262,9 @@ const Platform = memo<PlatformProps>(
                 type={'primary'}
                 onClick={handleUseOnLobeAI}
               >
-                {t('skills.details.sidebar.agent.useOnLobeAI')}
+                {t('skills.details.sidebar.agent.useOnLobeAI')
+                  .replaceAll('Lobe AI', BRANDING_LOBE_AI_NAME)
+                  .replaceAll('LobeAI', BRANDING_LOBE_AI_NAME)}
               </Button>
             </Flexbox>
           </Flexbox>

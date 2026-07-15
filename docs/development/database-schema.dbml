@@ -300,7 +300,7 @@ table agent_eval_runs {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
-    
+
     dataset_id [name: 'agent_eval_runs_dataset_id_idx']
     experiment_id [name: 'agent_eval_runs_experiment_id_idx']
     parent_run_id [name: 'agent_eval_runs_parent_run_id_idx']

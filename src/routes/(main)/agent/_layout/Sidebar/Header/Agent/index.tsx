@@ -1,5 +1,6 @@
 'use client';
 
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { ActionIcon, Avatar, Block, Text } from '@lobehub/ui';
 import { ChevronsUpDownIcon } from 'lucide-react';
 import { type PropsWithChildren } from 'react';
@@ -26,7 +27,7 @@ const Agent = memo<PropsWithChildren>(() => {
   ]);
 
   const displayTitle = isInbox
-    ? title || 'Lobe AI'
+    ? title || BRANDING_LOBE_AI_NAME
     : title || t('defaultSession', { ns: 'common' });
 
   if (isLoading) return <SkeletonItem height={32} padding={0} />;

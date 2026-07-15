@@ -1,5 +1,6 @@
 'use client';
 
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import isEqual from 'fast-deep-equal';
 import { ActivityIcon, GitBranchIcon, MessageSquareHeartIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
@@ -81,7 +82,9 @@ const Content = memo(() => {
     [availableTabs, t],
   );
 
-  const displayTitle = isInbox ? 'Lobe AI' : meta.title || t('defaultSession', { ns: 'common' });
+  const displayTitle = isInbox
+    ? BRANDING_LOBE_AI_NAME
+    : meta.title || t('defaultSession', { ns: 'common' });
 
   return (
     <SettingsModalLayout

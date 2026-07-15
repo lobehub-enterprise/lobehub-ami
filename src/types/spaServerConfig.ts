@@ -1,3 +1,5 @@
+import type { RuntimeBrandingConfig } from '@lobechat/business-const';
+
 import type { IFeatureFlags } from '@/config/featureFlags';
 import type { GlobalServerConfig } from '@/types/serverConfig';
 
@@ -18,6 +20,7 @@ export interface AnalyticsConfig {
 }
 
 export interface SPAClientEnv {
+  branding?: RuntimeBrandingConfig;
   marketBaseUrl?: string;
   pyodideIndexUrl?: string;
   pyodidePipIndexUrl?: string;

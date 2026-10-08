@@ -1,10 +1,11 @@
-import { APPLE_APP_STORE_ID, BRANDING_NAME, ORG_NAME } from '@lobechat/business-const';
+import { APPLE_APP_STORE_ID } from '@lobechat/business-const';
 import { OG_URL } from '@lobechat/const';
 
 import { getServerFeatureFlagsValue } from '@/config/featureFlags';
 import { OFFICIAL_URL } from '@/const/url';
 import { isCustomORG, isDesktop } from '@/const/version';
 import { appEnv } from '@/envs/app';
+import { brandingEnv, getClientBrandingConfig } from '@/envs/branding';
 import { fileEnv } from '@/envs/file';
 import { pythonEnv } from '@/envs/python';
 import { translation } from '@/libs/i18n/serverTranslation';
@@ -43,6 +44,7 @@ async function getTemplate(isMobile: boolean): Promise<string> {
 
 function buildClientEnv(): SPAClientEnv {
   return {
+    branding: getClientBrandingConfig(),
     marketBaseUrl: appEnv.MARKET_BASE_URL,
     pyodideIndexUrl: pythonEnv.NEXT_PUBLIC_PYODIDE_INDEX_URL,
     pyodidePipIndexUrl: pythonEnv.NEXT_PUBLIC_PYODIDE_PIP_INDEX_URL,
@@ -52,8 +54,8 @@ function buildClientEnv(): SPAClientEnv {
 
 async function buildSeoMeta(locale: string, isMobile: boolean): Promise<string> {
   const { t } = await translation('metadata', locale);
-  const title = t('chat.title', { appName: BRANDING_NAME });
-  const description = t('chat.description', { appName: BRANDING_NAME });
+  const title = t('chat.title', { appName: brandingEnv.BRANDING_NAME });
+  const description = t('chat.description', { appName: brandingEnv.BRANDING_NAME });
 
   const metas = [
     `<title>${title}</title>`,
@@ -63,13 +65,13 @@ async function buildSeoMeta(locale: string, isMobile: boolean): Promise<string> 
     `<meta property="og:type" content="website" />`,
     `<meta property="og:url" content="${OFFICIAL_URL}" />`,
     `<meta property="og:image" content="${OG_URL}" />`,
-    `<meta property="og:site_name" content="${BRANDING_NAME}" />`,
+    `<meta property="og:site_name" content="${brandingEnv.BRANDING_NAME}" />`,
     `<meta property="og:locale" content="${locale}" />`,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${title}" />`,
     `<meta name="twitter:description" content="${description}" />`,
     `<meta name="twitter:image" content="${OG_URL}" />`,
-    `<meta name="twitter:site" content="${isCustomORG ? `@${ORG_NAME}` : '@lobehub'}" />`,
+    `<meta name="twitter:site" content="${isCustomORG ? `@${brandingEnv.BRANDING_ORG_NAME}` : '@lobehub'}" />`,
   ];
 
   if (isMobile && APPLE_APP_STORE_ID) {

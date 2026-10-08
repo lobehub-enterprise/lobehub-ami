@@ -2,6 +2,7 @@ import { BRANDING_NAME } from '@lobechat/business-const';
 
 import { getServerFeatureFlagsValue } from '@/config/featureFlags';
 import { appEnv } from '@/envs/app';
+import { getClientBrandingConfig } from '@/envs/branding';
 import { fileEnv } from '@/envs/file';
 import { pythonEnv } from '@/envs/python';
 import { buildAnalyticsConfig, fetchViteDevTemplate, renderSpaHtml } from '@/libs/spaHtml';
@@ -27,6 +28,7 @@ async function getTemplate(): Promise<string> {
 
 function buildClientEnv(): SPAClientEnv {
   return {
+    branding: getClientBrandingConfig(),
     marketBaseUrl: appEnv.MARKET_BASE_URL,
     pyodideIndexUrl: pythonEnv.NEXT_PUBLIC_PYODIDE_INDEX_URL,
     pyodidePipIndexUrl: pythonEnv.NEXT_PUBLIC_PYODIDE_PIP_INDEX_URL,

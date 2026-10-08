@@ -79,14 +79,15 @@ RUN set -e && \
         npm config set registry "https://registry.npmmirror.com/"; \
         echo 'canvas_binary_host_mirror=https://npmmirror.com/mirrors/canvas' >> .npmrc; \
     fi && \
+    package_manager="$(node -p "require('./package.json').packageManager")" && \
     export COREPACK_NPM_REGISTRY=$(npm config get registry | sed 's/\/$//') && \
     npm i -g corepack@latest && \
     corepack enable && \
-    corepack use $(sed -n 's/.*"packageManager": "\(.*\)".*/\1/p' package.json) && \
+    corepack prepare "${package_manager}" --activate && \
     pnpm i && \
     mkdir -p /deps && \
     cd /deps && \
-    echo '{"name":"deps","private":true}' > package.json && \
+    printf '{"name":"deps","version":"1.0.0","private":true,"packageManager":"%s","type":"module"}\n' "${package_manager}" > package.json && \
     pnpm add pg drizzle-orm @neondatabase/serverless
 
 COPY . .
@@ -103,7 +104,8 @@ RUN pnpm exec esbuild scripts/elasticsearchCleanupIneligibleMessages/cli.ts --bu
 RUN pnpm exec esbuild scripts/pgSearchCleanup/index.ts --bundle --platform=node --format=cjs --outfile=/app/fts-search-pg-search-cleanup.cjs --external:pg
 
 # Preserve SWC helpers referenced through pnpm virtual-store symlinks by Next.js.
-RUN mkdir -p /runtime-deps && cp -a node_modules/.pnpm/@swc+helpers@* /runtime-deps/
+RUN mkdir -p /runtime-deps && \
+    find node_modules -path '*/.pnpm/@swc+helpers@*' -prune -exec cp -a {} /runtime-deps/ \;
 
 ## Application image, copy all the files for production
 FROM busybox:latest AS app
@@ -127,7 +129,7 @@ COPY --from=builder /app/fts-search-elasticsearch-sync.cjs /app/fts-search-elast
 COPY --from=builder /app/fts-search-ineligible-message-cleanup.cjs /app/fts-search-ineligible-message-cleanup.cjs
 COPY --from=builder /app/fts-search-pg-search-cleanup.cjs /app/fts-search-pg-search-cleanup.cjs
 
-# copy dependencies
+# copy migration dependencies
 COPY --from=builder /deps/node_modules/.pnpm /app/node_modules/.pnpm
 COPY --from=builder /deps/node_modules/pg /app/node_modules/pg
 COPY --from=builder /runtime-deps/ /app/node_modules/.pnpm/

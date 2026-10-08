@@ -1,7 +1,8 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+
 import { consola } from 'consola';
 import { colors } from 'consola/utils';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 
 import { entryLocaleJsonFilepath, i18nConfig, localeDir, srcDefaultLocales } from './const';
 import { tagWhite, writeJSON } from './utils';
@@ -24,7 +25,7 @@ export const genDefaultLocale = () => {
     const filepath = entryLocaleJsonFilepath(`${ns}.json`);
 
     // Ensure directory exists
-    const dir = dirname(filepath);
+    const dir = path.dirname(filepath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }

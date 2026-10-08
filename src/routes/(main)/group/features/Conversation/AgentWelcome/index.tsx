@@ -1,5 +1,6 @@
 'use client';
 
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { Flexbox, Markdown } from '@lobehub/ui';
 import { Text } from '@lobehub/ui/base-ui';
 import isEqual from 'fast-deep-equal';
@@ -56,7 +57,7 @@ const InboxWelcome = memo(() => {
   const message = useMemo(() => {
     if (openingMessage) return openingMessage;
     return agentSystemRoleMsg;
-  }, [openingMessage, agentSystemRoleMsg, meta.description]);
+  }, [openingMessage, agentSystemRoleMsg]);
 
   const displayTitle = groupMeta.title;
 
@@ -76,7 +77,9 @@ const InboxWelcome = memo(() => {
         </Text>
         <Flexbox width={'min(100%, 640px)'}>
           <Markdown fontSize={fontSize} variant={'chat'}>
-            {isInbox ? t('guide.defaultMessageWithoutCreate', { appName: 'Lobe AI' }) : message}
+            {isInbox
+              ? t('guide.defaultMessageWithoutCreate', { appName: BRANDING_LOBE_AI_NAME })
+              : message}
           </Markdown>
         </Flexbox>
         {openingQuestions.length > 0 && (

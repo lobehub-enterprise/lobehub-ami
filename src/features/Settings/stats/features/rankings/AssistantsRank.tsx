@@ -1,3 +1,4 @@
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { AGENT_CHAT_URL } from '@lobechat/const';
 import { agentDisplayName } from '@lobechat/types';
 import { BarList } from '@lobehub/charts';
@@ -52,7 +53,7 @@ export const AssistantsRank = memo<{ mobile?: boolean }>(({ mobile }) => {
       name: (
         <Link href={link} style={{ color: 'inherit' }}>
           {isInbox
-            ? t('inbox.title', { ns: 'chat' })
+            ? BRANDING_LOBE_AI_NAME
             : agentDisplayName(item, t('defaultAgent', { ns: 'chat' }))}
         </Link>
       ),

@@ -1,6 +1,6 @@
 'use client';
 
-import { DOWNLOAD_URL } from '@lobechat/const';
+import { DOWNLOAD_URL, isDesktop } from '@lobechat/const';
 import type { DeviceScope, DeviceVisibility } from '@lobechat/types';
 import { Button, createStaticStyles, cssVar, Flexbox, Icon, Tabs, Text } from '@lobehub/ui';
 import { DownloadIcon, MonitorDownIcon, ShieldCheckIcon, TerminalIcon } from 'lucide-react';
@@ -10,6 +10,10 @@ import { useTranslation } from 'react-i18next';
 import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
 import CommandLine from '@/components/CommandLine';
 import ImperativeModal from '@/components/ImperativeModal';
+import { useElectronStore } from '@/store/electron';
+import { electronSyncSelectors } from '@/store/electron/selectors';
+
+import { getCliLoginCommand } from './cliLoginCommand';
 
 const styles = createStaticStyles(({ css }) => ({
   footer: css`
@@ -94,6 +98,11 @@ const DeviceConnectModal = memo<DeviceConnectModalProps>(
     const { t } = useTranslation('setting');
     const workspaceId = useActiveWorkspaceId();
     const isWorkspace = scope === 'workspace';
+    // Desktop renders from app://renderer, so the signed-in server comes from its sync config.
+    const remoteServerUrl = useElectronStore(electronSyncSelectors.remoteServerUrl);
+    const loginCommand = getCliLoginCommand(
+      isDesktop ? remoteServerUrl : typeof window === 'undefined' ? '' : window.location.origin,
+    );
 
     const [active, setActive] = useState<'cli' | 'desktop'>(initialTab ?? 'desktop');
     useEffect(() => {
@@ -112,7 +121,7 @@ const DeviceConnectModal = memo<DeviceConnectModalProps>(
           <CommandLine command={'npm install -g @lobehub/cli'} />
         </Step>
         <Step index={2} title={t('devices.connectWizard.cli.loginTitle')}>
-          <CommandLine command={'lh login'} />
+          <CommandLine command={loginCommand} />
         </Step>
         <Step
           last

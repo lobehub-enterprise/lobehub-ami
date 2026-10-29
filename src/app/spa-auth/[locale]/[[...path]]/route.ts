@@ -1,6 +1,7 @@
 import { getServerFeatureFlagsValue } from '@/config/featureFlags';
 import { appEnv } from '@/envs/app';
 import { authEnv } from '@/envs/auth';
+import { getClientBrandingConfig } from '@/envs/branding';
 import { buildAnalyticsConfig, fetchViteDevTemplate, renderSpaHtml } from '@/libs/spaHtml';
 import { type Locales, normalizeLocale } from '@/locales/resources';
 import { getServerAuthConfig } from '@/server/globalConfig/getServerAuthConfig';
@@ -33,6 +34,7 @@ export async function GET(
 
   const authConfig: AuthSPAServerConfig = {
     analyticsConfig: buildAnalyticsConfig(),
+    clientEnv: { branding: getClientBrandingConfig() },
     config: getServerAuthConfig(),
     enableOIDC: authEnv.ENABLE_OIDC,
     featureFlags: getServerFeatureFlagsValue(),

@@ -1,3 +1,4 @@
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { agentDisplayName, type ConversationContext, type UIChatMessage } from '@lobechat/types';
 import { cx, Flexbox, Markdown, Text } from '@lobehub/ui';
 import { memo } from 'react';
@@ -81,7 +82,7 @@ const Preview = memo<PreviewProps>(
 
     const displayTitle =
       (isHeaderInbox ?? isInbox)
-        ? 'Lobe AI'
+        ? BRANDING_LOBE_AI_NAME
         : agentDisplayName(headerMeta) || title || currentTitle;
     const resolvedAgentId = (headerMeta && headerAgentId) || activeAgentId;
     const displayAvatar = headerMeta?.avatar || currentAvatar;

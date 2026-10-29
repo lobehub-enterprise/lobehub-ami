@@ -73,8 +73,7 @@ export const processWithArtifact = (input: string = '') => {
     output = output.replace(regex, '<lobeArtifact>');
   }
 
-  // Strip newlines inside the lobeAgents tag so attributes spread across lines
-  // stay a single contiguous raw HTML node for the rehype agents plugin.
+  // Strip newlines inside lobeAgents tags (self-closing or wrapping)
   output = output.replaceAll(AGENTS_TAG_REGEX_GLOBAL, (match) => match.replaceAll(/\r?\n|\r/g, ''));
 
   return output;

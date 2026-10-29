@@ -4,12 +4,11 @@ import {
   type UpdaterState,
   useWatchBroadcast,
 } from '@lobechat/electron-client-ipc';
-import { Block, Button, createStaticStyles, Flexbox, Tag, Tooltip } from '@lobehub/ui';
+import { Block, Button, createStaticStyles, Flexbox, Tag } from '@lobehub/ui';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ProductLogo } from '@/components/Branding';
-import { CHANGELOG_URL, DOWNLOAD_URL, MANUAL_UPGRADE_URL, OFFICIAL_SITE } from '@/const/url';
 import { CURRENT_VERSION } from '@/const/version';
 import { useNewVersion } from '@/features/User/UserPanel/useNewVersion';
 import { autoUpdateService } from '@/services/electron/autoUpdate';
@@ -66,9 +65,6 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
 
   useCheckServerVersion();
 
-  // Read the shared latest-version check state (deduped by key, no extra fetch)
-  // so a failed update check can surface a retry instead of silently rendering
-  // nothing — which is indistinguishable from "up to date".
   const { enableCheckUpdates } = useServerConfigStore(featureFlagsSelectors);
   const canAccessDevDock = useServerConfigStore((s) => s.canAccessDevDock);
   const devDockClickSequence = useRef(INITIAL_DEV_DOCK_CLICK_SEQUENCE);
@@ -110,16 +106,6 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
 
   const renderUpdateButton = () => {
     if (!isDesktop) {
-      if (hasNewVersion) {
-        return (
-          <a href={MANUAL_UPGRADE_URL} rel="noreferrer" style={{ flex: 1 }} target="_blank">
-            <Button block={mobile} type={'primary'}>
-              {t('upgradeVersion.action')}
-            </Button>
-          </a>
-        );
-      }
-      // A failed update check must not read as "up to date" — offer a retry.
       if (updateCheckError) {
         return (
           <Button block={mobile} loading={isCheckingUpdate} onClick={() => recheckUpdate()}>
@@ -162,16 +148,8 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
           </Button>
         );
       }
-      // snap / tar.gz / a runtime-less AppImage cannot replace themselves, so the
-      // only honest action is sending the user to a fresh build.
       case 'unsupported': {
-        return (
-          <Tooltip title={t('updateUnsupported.desc')}>
-            <a href={DOWNLOAD_URL.default} rel="noreferrer" style={{ flex: 1 }} target="_blank">
-              <Button block={mobile}>{t('updateUnsupported.action')}</Button>
-            </a>
-          </Tooltip>
-        );
+        return null;
       }
       default: {
         return (
@@ -192,18 +170,9 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
       width={'100%'}
     >
       <Flexbox horizontal align={'center'} flex={'none'} gap={16}>
-        <a href={OFFICIAL_SITE} rel="noreferrer" target="_blank">
-          <Block
-            clickable
-            align={'center'}
-            className={styles.logo}
-            height={64}
-            justify={'center'}
-            width={64}
-          >
-            <ProductLogo size={52} />
-          </Block>
-        </a>
+        <Block align={'center'} className={styles.logo} height={64} justify={'center'} width={64}>
+          <ProductLogo size={52} />
+        </Block>
         <Flexbox align={'flex-start'} gap={6}>
           <div style={{ fontSize: 18, fontWeight: 'bolder' }}>{BRANDING_NAME}</div>
           <Flexbox gap={6} horizontal={!mobile}>
@@ -235,9 +204,6 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
         </Flexbox>
       </Flexbox>
       <Flexbox horizontal flex={mobile ? 1 : undefined} gap={8}>
-        <a href={CHANGELOG_URL} rel="noreferrer" style={{ flex: 1 }} target="_blank">
-          <Button block={mobile}>{t('changelog')}</Button>
-        </a>
         {renderUpdateButton()}
       </Flexbox>
     </Flexbox>

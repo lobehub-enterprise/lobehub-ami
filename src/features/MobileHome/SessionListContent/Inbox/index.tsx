@@ -1,3 +1,4 @@
+import { BRANDING_LOBE_AI_NAME } from '@lobechat/business-const';
 import { AGENT_CHAT_URL } from '@lobechat/const';
 import { memo } from 'react';
 
@@ -21,7 +22,7 @@ const Inbox = memo(() => {
 
   return (
     <WorkspaceLink
-      aria-label={'Lobe AI'}
+      aria-label={BRANDING_LOBE_AI_NAME}
       to={AGENT_CHAT_URL(inboxRouteAgentId, mobile)}
       onClick={(e) => {
         e.preventDefault();
@@ -32,7 +33,7 @@ const Inbox = memo(() => {
         active={isInboxActive}
         avatar={DEFAULT_INBOX_AVATAR}
         key={'inbox'}
-        title={'Lobe AI'}
+        title={BRANDING_LOBE_AI_NAME}
         styles={{
           container: {
             gap: 12,

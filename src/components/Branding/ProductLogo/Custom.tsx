@@ -1,4 +1,11 @@
-import { BRANDING_LOGO_URL, BRANDING_NAME } from '@lobechat/business-const';
+'use client';
+
+import {
+  BRANDING_LOGO_DARK_URL,
+  BRANDING_LOGO_LIGHT_URL,
+  BRANDING_LOGO_URL,
+  BRANDING_NAME,
+} from '@lobechat/business-const';
 import { type IconType } from '@lobehub/icons';
 import { type FlexboxProps } from '@lobehub/ui';
 import { createStaticStyles, cssVar, Flexbox } from '@lobehub/ui';
@@ -6,6 +13,7 @@ import { type LobeChatProps } from '@lobehub/ui/brand';
 import { type ReactNode } from 'react';
 import { memo } from 'react';
 
+import { useIsDark } from '@/hooks/useIsDark';
 import { type ImageProps } from '@/libs/next/Image';
 import Image from '@/libs/next/Image';
 
@@ -37,11 +45,15 @@ const CustomTextLogo = memo<FlexboxProps & { size: number }>(({ size, style, ...
 
 const CustomImageLogo = memo<Omit<ImageProps, 'alt' | 'src'> & { size: number }>(
   ({ size, ...rest }) => {
+    const isDark = useIsDark();
+    const logoUrl =
+      (isDark ? BRANDING_LOGO_DARK_URL : BRANDING_LOGO_LIGHT_URL) || BRANDING_LOGO_URL;
+
     return (
       <Image
         alt={BRANDING_NAME}
         height={size}
-        src={BRANDING_LOGO_URL}
+        src={logoUrl}
         unoptimized={true}
         width={size}
         {...rest}
@@ -70,16 +82,23 @@ const Divider: IconType = (({ ref, size = '1em', style, ...rest }) => (
 
 const CustomLogo = memo<LobeChatProps>(({ extra, size = 32, className, style, type, ...rest }) => {
   let logoComponent: ReactNode;
+  const hasLogo = !!(BRANDING_LOGO_URL || BRANDING_LOGO_DARK_URL || BRANDING_LOGO_LIGHT_URL);
 
   switch (type) {
     case '3d':
     case 'flat': {
-      logoComponent = <CustomImageLogo size={size} style={style} {...rest} />;
+      logoComponent = hasLogo ? (
+        <CustomImageLogo size={size} style={style} {...rest} />
+      ) : (
+        <CustomTextLogo size={size} style={style} {...rest} />
+      );
       break;
     }
     case 'mono': {
-      logoComponent = (
+      logoComponent = hasLogo ? (
         <CustomImageLogo size={size} style={{ filter: 'grayscale(100%)', ...style }} {...rest} />
+      ) : (
+        <CustomTextLogo size={size} style={style} {...rest} />
       );
       break;
     }
@@ -90,8 +109,8 @@ const CustomLogo = memo<LobeChatProps>(({ extra, size = 32, className, style, ty
     case 'combine': {
       logoComponent = (
         <>
-          <CustomImageLogo size={size} />
-          <CustomTextLogo size={size} style={{ marginLeft: Math.round(size / 4) }} />
+          {hasLogo && <CustomImageLogo size={size} />}
+          <CustomTextLogo size={size} style={{ marginLeft: hasLogo ? Math.round(size / 4) : 0 }} />
         </>
       );
 
@@ -105,7 +124,11 @@ const CustomLogo = memo<LobeChatProps>(({ extra, size = 32, className, style, ty
       break;
     }
     default: {
-      logoComponent = <CustomImageLogo size={size} style={style} {...rest} />;
+      logoComponent = hasLogo ? (
+        <CustomImageLogo size={size} style={style} {...rest} />
+      ) : (
+        <CustomTextLogo size={size} style={style} {...rest} />
+      );
       break;
     }
   }

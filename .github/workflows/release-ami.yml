@@ -1,52 +1,421 @@
-name: Release lobehub-ami
+# 发布产品镜像到 AWS ECR，并登记到 Cloud Admin。
+#
+# 本文件由 lobehub-biz/Lobehub-Enterprise-Orchestrator 的
+# scripts/release-workflow/ 生成：主体在所有发布仓库中逐字相同，只有两段
+# 「仓库参数」不同。修改主体时改模板，再用 render 重新生成各仓库的副本；
+# 用 check 核对各仓库副本是否与模板一致。不要只改某一个仓库。
+#
+# 配置（仓库级 Settings → Secrets and variables → Actions，不使用 Environment）：
+#   变量 ECR_PUSH_ROLE_ARN、CLOUD_ADMIN_URL；
+#   密钥 CLOUD_ADMIN_INTEGRATION_TOKEN（License 产品为 CLOUD_ADMIN_INTEGRATION_TOKEN_LICENSE），
+#   有私有子模块的仓库另有 SUBMODULE_GITHUB_TOKEN。
+# ECR 推送角色只信任各仓库的发布分支（OIDC sub = repo:<组织>/<仓库>:ref:refs/heads/<分支>）。
+#
+# 版本：production 为 vX.Y.Z（必填 version 与 changelog），浮动 tag latest；
+#       beta 为 beta-<本次 run 创建时间，上海时间 YYYYMMDDHHmm>，浮动 tag beta-latest。
+# 固定 tag 已存在时失败，不覆盖。
+
+name: Release
 
 on:
   workflow_dispatch:
     inputs:
       channel:
-        description: Release channel; only decides the version tag. Registry and reporting configuration are repository-level.
-        required: true
-        default: beta
+        description: 发布通道；只决定版本号与浮动 tag
         type: choice
         options:
           - beta
           - production
+        default: beta
+        required: true
       version:
-        description: Production version (X.Y.Z, optional leading v). Required for production, ignored for beta.
-        required: false
+        description: production 版本号 X.Y.Z（可带前导 v，不接受预发布后缀）；beta 忽略
         type: string
+        required: false
+        default: ""
       changelog_summary:
-        description: Optional changelog summary. Defaults to the first non-empty changelog line, then "Release <version>".
-        required: false
+        description: 可选摘要；为空时取 changelog 首个非空行，再为空取 Release <版本>
         type: string
+        required: false
+        default: ""
       changelog:
-        description: Changelog body. Required for production; optional for beta.
-        required: false
+        description: 更新说明；production 必填，beta 可空
         type: string
+        required: false
+        default: ""
       requires:
-        description: Optional JSON object of product requirements, for example {"lobehub-enterprise":">=2.3.0"}.
-        required: false
+        description: '可选 JSON 对象，如 {"lobehub-enterprise":">=2.3.0"}'
         type: string
+        required: false
+        default: ""
 
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+# ---- 仓库参数：构建（开始）----
+env:
+  BUILD_CONTEXT: "."
+  BUILD_FILE: "Dockerfile"
+  BUILD_TARGET: ""
+  BUILD_SUBMODULES: "false"
+# ---- 仓库参数：构建（结束）----
 
 jobs:
   release:
-    name: Release lobehub-ami
-    permissions:
-      contents: read
-      id-token: write
-      actions: read
-    uses: lobehub-enterprise/lobehub-ami-orchestrator/.github/workflows/release-image.yml@main
-    with:
-      channel: ${{ inputs.channel }}
-      version: ${{ inputs.version }}
-      changelog_summary: ${{ inputs.changelog_summary }}
-      changelog: ${{ inputs.changelog }}
-      requires: ${{ inputs.requires }}
-      product: lobehub-ami
-      ecr_repository: lobehub/lobehub-ami
-      context: .
-      file: Dockerfile
-      license: false
-    secrets:
-      integration_token: ${{ secrets.CLOUD_ADMIN_INTEGRATION_TOKEN }}
+    name: ${{ matrix.product }} (${{ inputs.channel }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    concurrency:
+      group: release-${{ matrix.product }}-${{ inputs.channel }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---- 仓库参数：产品（开始）----
+          - product: lobehub-ami
+            ecr_repository: lobehub/lobehub-ami
+            license: false
+            token_secret: CLOUD_ADMIN_INTEGRATION_TOKEN
+            build_args: ""
+          # ---- 仓库参数：产品（结束）----
+    env:
+      AWS_PAGER: ""
+    steps:
+      - name: Validate inputs and configuration
+        id: meta
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          CHANGELOG: ${{ inputs.changelog }}
+          CHANGELOG_SUMMARY: ${{ inputs.changelog_summary }}
+          REQUIRES: ${{ inputs.requires }}
+          PRODUCT: ${{ matrix.product }}
+          ECR_REPOSITORY: ${{ matrix.ecr_repository }}
+          CLOUD_ADMIN_URL: ${{ vars.CLOUD_ADMIN_URL }}
+          ECR_PUSH_ROLE_ARN: ${{ vars.ECR_PUSH_ROLE_ARN }}
+          INTEGRATION_TOKEN: ${{ secrets[matrix.token_secret] }}
+          TOKEN_SECRET: ${{ matrix.token_secret }}
+          EVENT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+          [ "$CHANNEL" = beta ] || [ "$CHANNEL" = production ] \
+            || die "channel 必须是 beta 或 production，收到 $CHANNEL"
+
+          [ -n "$CLOUD_ADMIN_URL" ] || die "缺少仓库变量 CLOUD_ADMIN_URL"
+          case "$CLOUD_ADMIN_URL" in
+            http://*|https://*) ;;
+            *) die "CLOUD_ADMIN_URL 必须以 http:// 或 https:// 开头" ;;
+          esac
+          case "$ECR_PUSH_ROLE_ARN" in
+            arn:aws:iam::*) ;;
+            *) die "缺少合法的仓库变量 ECR_PUSH_ROLE_ARN" ;;
+          esac
+          [ -n "$INTEGRATION_TOKEN" ] || die "缺少仓库密钥 $TOKEN_SECRET"
+
+          [[ "$PRODUCT" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+            || die "product 只能包含小写字母、数字和连字符，收到 $PRODUCT"
+          case "$ECR_REPOSITORY" in
+            lobehub-enterprise/*|lobehub/*) ;;
+            *) die "ecr_repository 只允许 lobehub-enterprise/ 或 lobehub/ 前缀，收到 $ECR_REPOSITORY" ;;
+          esac
+          [ "${ECR_REPOSITORY#*/}" = "$PRODUCT" ] \
+            || die "product 必须等于 ecr_repository 的最后一段（product=$PRODUCT，ecr_repository=$ECR_REPOSITORY）"
+
+          if [ "$CHANNEL" = production ]; then
+            [ -n "$VERSION" ] || die "production 必须提供 version（X.Y.Z，可带前导 v）"
+            if [[ "$VERSION" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              release_version="v${VERSION#v}"
+            else
+              die "version 必须是 X.Y.Z（可带前导 v），不接受预发布后缀，收到 $VERSION"
+            fi
+            changelog_content="$CHANGELOG"
+            [ -n "${changelog_content//[[:space:]]/}" ] \
+              || die "production 必须提供非空 changelog"
+            fixed_tag="$release_version"
+            floating_tag="latest"
+          else
+            [ -z "$VERSION" ] || echo "::notice::beta 忽略 version 输入（$VERSION）"
+            created_at="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq .created_at)" \
+              || die "无法读取本次 workflow run 的创建时间（run ${GITHUB_RUN_ID}）"
+            [ -n "$created_at" ] \
+              || die "本次 workflow run 的 created_at 为空（run ${GITHUB_RUN_ID}）"
+            stamp="$(TZ=Asia/Shanghai date -d "$created_at" +%Y%m%d%H%M)" \
+              || die "无法把 run 创建时间 $created_at 转为上海时间"
+            case "$stamp" in
+              [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+              *) die "无法生成上海时间版本号，收到 $stamp" ;;
+            esac
+            release_version="beta-${stamp}"
+            changelog_content="$CHANGELOG"
+            if [ -z "${changelog_content//[[:space:]]/}" ]; then
+              changelog_content="Beta build ${release_version} from ${EVENT_SHA:0:7}"
+            fi
+            fixed_tag="$release_version"
+            floating_tag="beta-latest"
+          fi
+
+          summary="$CHANGELOG_SUMMARY"
+          if [ -z "${summary//[[:space:]]/}" ]; then
+            summary="$(printf '%s\n' "$changelog_content" \
+              | awk 'NF { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }')"
+          fi
+          [ -n "$summary" ] || summary="Release ${release_version}"
+          case "$summary" in
+            *$'\n'*) die "changelog_summary 不能包含换行" ;;
+          esac
+
+          if [ -n "${REQUIRES//[[:space:]]/}" ]; then
+            printf '%s' "$REQUIRES" > "$RUNNER_TEMP/requires.json"
+            jq -e 'type == "object"' "$RUNNER_TEMP/requires.json" >/dev/null 2>&1 \
+              || die "requires 必须是合法的 JSON 对象，收到 $REQUIRES"
+          else
+            printf '{}\n' > "$RUNNER_TEMP/requires.json"
+          fi
+
+          printf '%s' "$changelog_content" > "$RUNNER_TEMP/changelog.md"
+          printf '%s' "$summary" > "$RUNNER_TEMP/changelog-summary.txt"
+
+          {
+            printf 'release_version=%s\n' "$release_version"
+            printf 'fixed_tag=%s\n' "$fixed_tag"
+            printf 'floating_tag=%s\n' "$floating_tag"
+          } >> "$GITHUB_OUTPUT"
+
+          printf '固定 tag：%s；浮动 tag：%s\n' "$fixed_tag" "$floating_tag"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.ECR_PUSH_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check fixed tag does not exist
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ matrix.ecr_repository }}
+          FIXED_TAG: ${{ steps.meta.outputs.fixed_tag }}
+        run: |
+          set -euo pipefail
+          expected_registry='539483168729.dkr.ecr.us-east-1.amazonaws.com'
+          [ "$REGISTRY" = "$expected_registry" ] \
+            || { printf 'ERROR: ECR 登录得到的 registry 是 %s，预期 %s\n' \
+              "$REGISTRY" "$expected_registry" >&2; exit 1; }
+          err="$RUNNER_TEMP/describe-fixed-tag.err"
+          if existing="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$FIXED_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text 2>"$err")"; then
+            printf 'ERROR: 固定 tag %s 已存在于 %s（%s），不覆盖\n' \
+              "$FIXED_TAG" "$ECR_REPOSITORY" "$existing" >&2
+            exit 1
+          fi
+          if grep -q 'RepositoryNotFoundException' "$err"; then
+            printf 'ERROR: ECR 仓库 %s 不存在，请先创建并开启固定 tag 不可变\n' \
+              "$ECR_REPOSITORY" >&2
+            exit 1
+          fi
+          if ! grep -q 'ImageNotFoundException' "$err"; then
+            cat "$err" >&2
+            printf 'ERROR: 查询 ECR 固定 tag 失败\n' >&2
+            exit 1
+          fi
+          printf '固定 tag %s 不存在，继续\n' "$FIXED_TAG"
+
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SUBMODULE_GITHUB_TOKEN || github.token }}
+          submodules: ${{ env.BUILD_SUBMODULES }}
+          persist-credentials: false
+
+      # build_args 中的 {app_version} 替换为应用版本（production 为去掉 v 的版本号，
+      # beta 为根 package.json 的 version），{sha} 替换为本次提交
+      - name: Resolve build args
+        id: build-args
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
+          BUILD_ARGS: ${{ matrix.build_args }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          args="$BUILD_ARGS"
+          if [[ "$args" == *'{app_version}'* ]]; then
+            if [ "$CHANNEL" = production ]; then
+              app_version="${RELEASE_VERSION#v}"
+            else
+              app_version="$(node -p "require('./package.json').version")"
+            fi
+            [ -n "$app_version" ] || { echo 'ERROR: 无法确定 {app_version}' >&2; exit 1; }
+            args="${args//\{app_version\}/$app_version}"
+          fi
+          args="${args//\{sha\}/$EVENT_SHA}"
+          {
+            echo 'value<<BUILD_ARGS_EOF'
+            printf '%s\n' "$args"
+            echo 'BUILD_ARGS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.BUILD_FILE }}
+          target: ${{ env.BUILD_TARGET }}
+          build-args: ${{ steps.build-args.outputs.value }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repository }}:${{ steps.meta.outputs.fixed_tag }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repository }}:${{ steps.meta.outputs.floating_tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Verify tags and digest
+        id: verify
+        env:
+          ECR_REPOSITORY: ${{ matrix.ecr_repository }}
+          FIXED_TAG: ${{ steps.meta.outputs.fixed_tag }}
+          FLOATING_TAG: ${{ steps.meta.outputs.floating_tag }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          fixed="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$FIXED_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          floating="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$FLOATING_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+
+          case "$fixed" in
+            sha256:*) ;;
+            *) printf 'ERROR: 固定 tag %s 读回的 digest 非法：%s\n' "$FIXED_TAG" "$fixed" >&2; exit 1 ;;
+          esac
+          [ "$fixed" = "$floating" ] \
+            || { printf 'ERROR: %s 与 %s 的 digest 不同（%s / %s）\n' \
+              "$FIXED_TAG" "$FLOATING_TAG" "$fixed" "$floating" >&2; exit 1; }
+          if [ -n "$BUILD_DIGEST" ] && [ "$BUILD_DIGEST" != "$fixed" ]; then
+            printf 'ERROR: 构建输出 digest %s 与 ECR 读回 %s 不一致\n' "$BUILD_DIGEST" "$fixed" >&2
+            exit 1
+          fi
+
+          printf 'digest=%s\n' "$fixed" >> "$GITHUB_OUTPUT"
+          printf '镜像已推送：%s/%s:%s@%s\n' "$REGISTRY" "$ECR_REPOSITORY" "$FIXED_TAG" "$fixed"
+
+      - name: Build artifact registration payload
+        env:
+          PAYLOAD_FILE: ${{ runner.temp }}/cloud-admin-payload.json
+          CHANGELOG_FILE: ${{ runner.temp }}/changelog.md
+          SUMMARY_FILE: ${{ runner.temp }}/changelog-summary.txt
+          REQUIRES_FILE: ${{ runner.temp }}/requires.json
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
+          FIXED_TAG: ${{ steps.meta.outputs.fixed_tag }}
+          FLOATING_TAG: ${{ steps.meta.outputs.floating_tag }}
+          DIGEST: ${{ steps.verify.outputs.digest }}
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ matrix.ecr_repository }}
+          LICENSE_FLAG: ${{ matrix.license }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_COMMIT_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+
+          const digest = process.env.DIGEST;
+          const fixedTag = process.env.FIXED_TAG;
+          const registry = process.env.REGISTRY.replace(/\/+$/, '');
+          const imageRef = `${registry}/${process.env.ECR_REPOSITORY}:${fixedTag}`;
+
+          const body = {
+            artifactKind: 'container_image',
+            storageProvider: 'oci_registry',
+            locator: `${imageRef}@${digest}`,
+            digest,
+            releaseVersion: process.env.RELEASE_VERSION,
+            releaseChannel: process.env.CHANNEL,
+            platform: 'linux',
+            arch: 'amd64',
+            aliases: [
+              { alias: fixedTag, aliasType: 'release_version' },
+              { alias: process.env.FLOATING_TAG, aliasType: 'retag' },
+            ],
+            changelog: {
+              summary: fs.readFileSync(process.env.SUMMARY_FILE, 'utf8').trim(),
+              content: fs.readFileSync(process.env.CHANGELOG_FILE, 'utf8').replace(/\s+$/, ''),
+            },
+            metadataSnapshot: {
+              requires: JSON.parse(fs.readFileSync(process.env.REQUIRES_FILE, 'utf8')),
+              imageRef,
+              workflowRunUrl: process.env.WORKFLOW_RUN_URL,
+              license: process.env.LICENSE_FLAG === 'true',
+            },
+            sourceCommitSha: process.env.SOURCE_COMMIT_SHA,
+            sourceRef: process.env.SOURCE_REF,
+            workflowRunId: process.env.WORKFLOW_RUN_ID,
+          };
+
+          fs.writeFileSync(process.env.PAYLOAD_FILE, `${JSON.stringify(body, null, 2)}\n`);
+          NODE
+          printf '上报体已生成：%s\n' "$PAYLOAD_FILE"
+
+      - name: Report artifact to Cloud Admin
+        env:
+          CLOUD_ADMIN_URL: ${{ vars.CLOUD_ADMIN_URL }}
+          INTEGRATION_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PRODUCT: ${{ matrix.product }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
+          PAYLOAD_FILE: ${{ runner.temp }}/cloud-admin-payload.json
+        run: |
+          set -euo pipefail
+          url="${CLOUD_ADMIN_URL%/}/api/v1/products/${PRODUCT}/artifacts"
+          response_file="$RUNNER_TEMP/cloud-admin-response.json"
+          if ! status="$(curl -sS --connect-timeout 10 --max-time 60 \
+            -o "$response_file" -w '%{http_code}' \
+            -X POST "$url" \
+            -H "Authorization: Bearer ${INTEGRATION_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data-binary "@${PAYLOAD_FILE}")"; then
+            printf 'ERROR: 请求 Cloud Admin 失败：%s\n' "$url" >&2
+            exit 1
+          fi
+          case "$status" in
+            2??)
+              printf 'Cloud Admin 已登记 %s %s（HTTP %s）\n' \
+                "$PRODUCT" "$RELEASE_VERSION" "$status"
+              ;;
+            *)
+              printf 'ERROR: Cloud Admin 返回 HTTP %s，响应体：\n' "$status" >&2
+              cat "$response_file" >&2
+              printf '\n' >&2
+              exit 1
+              ;;
+          esac

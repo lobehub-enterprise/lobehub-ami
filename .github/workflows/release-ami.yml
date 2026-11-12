@@ -236,9 +236,23 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.SUBMODULE_GITHUB_TOKEN || github.token }}
-          submodules: ${{ env.BUILD_SUBMODULES }}
           persist-credentials: false
+
+      # 主仓库用 github.token 检出；私有子模块用仓库密钥 SUBMODULE_GITHUB_TOKEN（只读子模块仓库即可）
+      - name: Check out submodules
+        if: env.BUILD_SUBMODULES != 'false'
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$SUBMODULE_TOKEN" ] || { echo 'ERROR: 缺少仓库密钥 SUBMODULE_GITHUB_TOKEN' >&2; exit 1; }
+          recursive=''
+          [ "$BUILD_SUBMODULES" != recursive ] || recursive='--recursive'
+          # 子模块地址可能是 SSH 形式（git@github.com:），统一改写为 HTTPS 再带令牌
+          git -c 'url.https://github.com/.insteadOf=git@github.com:' \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$SUBMODULE_TOKEN" | base64 -w0)" \
+            submodule update --init $recursive --depth 1
+          git submodule status $recursive
 
       # build_args 中的 {app_version} 替换为应用版本（production 为去掉 v 的版本号，
       # beta 为根 package.json 的 version），{sha} 替换为本次提交

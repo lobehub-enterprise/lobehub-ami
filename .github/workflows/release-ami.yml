@@ -28,9 +28,6 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: release-lobehub-ami-${{ inputs.channel }}
-  cancel-in-progress: false
 
 jobs:
   release:

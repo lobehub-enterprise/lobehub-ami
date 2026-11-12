@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: Release channel. The GitHub Environment of the same name provides the registry and reporting configuration.
+        description: Release channel; only decides the version tag. Registry and reporting configuration are repository-level.
         required: true
         default: beta
         type: choice

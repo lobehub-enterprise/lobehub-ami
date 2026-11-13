@@ -1,4 +1,4 @@
-# 发布产品镜像到 AWS ECR 与火山 CR，核对 digest 后登记到 Cloud Admin。
+# 发布产品镜像到 AWS ECR，并登记到 Cloud Admin。
 #
 # 本文件由 lobehub-biz/Lobehub-Enterprise-Orchestrator 的
 # scripts/release-workflow/ 生成：主体在所有发布仓库中逐字相同，只有两段
@@ -8,9 +8,8 @@
 # 配置（仓库级 Settings → Secrets and variables → Actions，不使用 Environment）：
 #   变量 ECR_PUSH_ROLE_ARN、CLOUD_ADMIN_URL；
 #   密钥 CLOUD_ADMIN_INTEGRATION_TOKEN（License 产品为 CLOUD_ADMIN_INTEGRATION_TOKEN_LICENSE），
-#   CR 产品需要 VOLC_CR_ACCESS_KEY_ID、VOLC_CR_SECRET_ACCESS_KEY；
 #   有私有子模块的仓库另有 SUBMODULE_GITHUB_TOKEN。
-# cr_repository 为空时只推 ECR；token_secret 为空时跳过 Cloud Admin（Acceptance 暂无产品）。
+# token_secret 为空时跳过 Cloud Admin（Acceptance 暂无产品）。
 # ECR 推送角色只信任各仓库的发布分支（OIDC sub = repo:<组织>/<仓库>:ref:refs/heads/<分支>）。
 #
 # 版本：production 为 vX.Y.Z（必填 version 与 changelog），浮动 tag latest；
@@ -79,7 +78,6 @@ jobs:
           # ---- 仓库参数：产品（开始）----
           - product: lobehub-ami
             ecr_repository: lobehub/lobehub-ami
-            cr_repository: ""
             license: false
             token_secret: "CLOUD_ADMIN_INTEGRATION_TOKEN"
             build_args: ""
@@ -205,161 +203,11 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Prepare CR helper
-        if: matrix.cr_repository != ''
-        run: |
-          set -euo pipefail
-          umask 077
-          cat > "$RUNNER_TEMP/cr-release.py" <<'PYTHON'
-          # Self-contained stdlib signer: no ve installation or shared ve profile.
-          # CR API contract follows deploy/tools/cr/issue-ticket.ts (2022-05-12,
-          # Registry + Unix-seconds ExpiresAt), with official HMAC-SHA256 signing:
-          # https://docs.volcengine.com/docs/api-signature-call-guide/signature-method
-          # https://docs.volcengine.com/docs/cr/getauthorizationtoken
-          # https://docs.volcengine.com/docs/cr/listrepositories
-          # https://docs.volcengine.com/docs/cr/listtags
-          import base64
-          import datetime
-          import hashlib
-          import hmac
-          import json
-          import os
-          import re
-          import subprocess
-          import sys
-          import time
-          import urllib.parse
-          import urllib.request
-
-          HOST = 'cr.cn-beijing.volcengineapi.com'
-          REGISTRY = 'lobehub-enterprise-cr'
-          NAMESPACE = 'lobehub_enterprise_default'
-          DOCKER_HOST = 'lobehub-enterprise-cr-cn-beijing.cr.volces.com'
-
-
-          def mask(value):
-              escaped = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-              print('::add-mask::' + escaped, flush=True)
-
-
-          def api(action, body):
-              ak = os.environ['VOLC_CR_ACCESS_KEY_ID']
-              sk = os.environ['VOLC_CR_SECRET_ACCESS_KEY']
-              if not ak or not sk:
-                  raise ValueError('missing CR secrets')
-              mask(ak)
-              mask(sk)
-              now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-              payload = json.dumps({'Registry': REGISTRY, **body}, separators=(',', ':')).encode()
-              hashed = hashlib.sha256(payload).hexdigest()
-              query = urllib.parse.urlencode({'Action': action, 'Version': '2022-05-12'})
-              headers = {'content-type': 'application/json', 'host': HOST,
-                         'x-content-sha256': hashed, 'x-date': now}
-              signed = ';'.join(sorted(headers))
-              canonical = '\n'.join(['POST', '/', query,
-                                     ''.join(k + ':' + headers[k] + '\n' for k in sorted(headers)),
-                                     signed, hashed])
-              scope = now[:8] + '/cn-beijing/cr/request'
-              to_sign = '\n'.join(['HMAC-SHA256', now, scope, hashlib.sha256(canonical.encode()).hexdigest()])
-              key = sk.encode()
-              for part in [now[:8], 'cn-beijing', 'cr', 'request']:
-                  key = hmac.new(key, part.encode(), hashlib.sha256).digest()
-              signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
-              headers['authorization'] = (f'HMAC-SHA256 Credential={ak}/{scope}, '
-                                          f'SignedHeaders={signed}, Signature={signature}')
-              request = urllib.request.Request('https://' + HOST + '/?' + query, data=payload, headers=headers)
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  result = json.load(response)
-              if result.get('ResponseMetadata', {}).get('Error') or not isinstance(result.get('Result'), dict):
-                  raise ValueError('CR API failed')
-              return result['Result']
-
-
-          def tags(repository, names):
-              result = api('ListTags', {'Namespace': NAMESPACE, 'Repository': repository,
-                                       'Filter': {'Names': names}, 'PageSize': 100, 'PageNumber': 1})
-              # Exact filters (no wildcards), at most two tags; fail closed on malformed/paged results.
-              items = result['Items']
-              if not isinstance(items, list) or result['TotalCount'] != len(items):
-                  raise ValueError('incomplete CR tag response')
-              return {item['Name']: item['Digest'] for item in items}
-
-
-          def check(repository):
-              result = api('ListRepositories', {'Filter': {'Namespaces': [NAMESPACE], 'Names': [repository]},
-                                                'PageSize': 100, 'PageNumber': 1})
-              if not any(item['Name'] == repository and item['Namespace'] == NAMESPACE for item in result['Items']):
-                  raise ValueError('CR repository missing; pre-create it, never auto-create')
-              fixed = os.environ['FIXED_TAG']
-              if fixed in tags(repository, [fixed]):
-                  raise ValueError('CR fixed tag already exists; refusing overwrite')
-              print('CR repository exists and fixed tag is absent', flush=True)
-
-
-          def login():
-              requested_at = int(time.time())
-              result = api('GetAuthorizationToken', {'ExpiresAt': requested_at + 7200})
-              token, username = result['Token'], result['Username']
-              if not isinstance(token, str) or not token or not isinstance(username, str) or not username:
-                  raise ValueError('invalid CR credentials')
-              mask(token)
-              mask(username)
-              mask(base64.b64encode((username + ':' + token).encode()).decode())
-              expires = datetime.datetime.fromisoformat(result['ExpireTime'].replace('Z', '+00:00')).timestamp()
-              if not requested_at < expires <= requested_at + 7205:
-                  raise ValueError('invalid CR token expiry')
-              # Token only enters stdin; suppress vendor output to prevent unexpected credential echoes.
-              subprocess.run(['docker', 'login', DOCKER_HOST, '--username', username, '--password-stdin'],
-                             input=token.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-              print('CR login succeeded (temporary token, at most two hours)', flush=True)
-
-
-          def verify(repository):
-              fixed, floating = os.environ['FIXED_TAG'], os.environ['FLOATING_TAG']
-              expected = os.environ['ECR_DIGEST']
-              if not re.fullmatch(r'sha256:[0-9a-f]{64}', expected):
-                  raise ValueError('invalid ECR digest')
-              actual = tags(repository, [fixed, floating])
-              if actual.get(fixed) != expected or actual.get(floating) != expected:
-                  raise ValueError('CR fixed/floating digest differs from verified ECR digest')
-              print('CR fixed and floating tags both match ECR digest: ' + expected, flush=True)
-
-
-          if __name__ == '__main__':
-              mode = sys.argv[1]
-              try:
-                  repository = os.environ['CR_REPOSITORY']
-                  if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', repository):
-                      raise ValueError('invalid CR repository')
-                  if mode == 'check':
-                      check(repository)
-                  elif mode == 'login':
-                      login()
-                  elif mode == 'verify':
-                      verify(repository)
-                  else:
-                      raise ValueError('unknown mode')
-              except ValueError as error:
-                  # Only our own static errors are safe to print; JSON/date parser errors may echo input.
-                  safe = {'CR repository missing; pre-create it, never auto-create',
-                          'CR fixed tag already exists; refusing overwrite',
-                          'CR fixed/floating digest differs from verified ECR digest'}
-                  print('ERROR: ' + (str(error) if str(error) in safe else 'CR validation failed'), file=sys.stderr)
-                  sys.exit(1)
-              except Exception:
-                  # Never dump request/response/traceback: providers can echo AK/SK or tokens in errors.
-                  print('ERROR: CR request or login failed; check permissions and configuration', file=sys.stderr)
-                  sys.exit(1)
-          PYTHON
-
       - name: Check fixed tag does not exist
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ matrix.ecr_repository }}
           FIXED_TAG: ${{ steps.meta.outputs.fixed_tag }}
-          CR_REPOSITORY: ${{ matrix.cr_repository }}
-          VOLC_CR_ACCESS_KEY_ID: ${{ matrix.cr_repository != '' && secrets.VOLC_CR_ACCESS_KEY_ID || '' }}
-          VOLC_CR_SECRET_ACCESS_KEY: ${{ matrix.cr_repository != '' && secrets.VOLC_CR_SECRET_ACCESS_KEY || '' }}
         run: |
           set -euo pipefail
           expected_registry='539483168729.dkr.ecr.us-east-1.amazonaws.com'
@@ -386,10 +234,7 @@ jobs:
             printf 'ERROR: 查询 ECR 固定 tag 失败\n' >&2
             exit 1
           fi
-          if [ -n "$CR_REPOSITORY" ]; then
-            python3 "$RUNNER_TEMP/cr-release.py" check
-          fi
-          printf '固定 tag %s 在所有目标仓库均不存在，继续\n' "$FIXED_TAG"
+          printf '固定 tag %s 不存在，继续\n' "$FIXED_TAG"
 
       - name: Check out source
         uses: actions/checkout@v4
@@ -508,30 +353,6 @@ jobs:
           printf 'digest=%s\n' "$fixed" >> "$GITHUB_OUTPUT"
           printf '镜像已推送：%s/%s:%s@%s\n' "$REGISTRY" "$ECR_REPOSITORY" "$FIXED_TAG" "$fixed"
 
-      # Issue the two-hour token after the potentially long build, not before it.
-      - name: Copy verified ECR digest to CR and verify both tags
-        if: matrix.cr_repository != ''
-        env:
-          CR_REPOSITORY: ${{ matrix.cr_repository }}
-          VOLC_CR_ACCESS_KEY_ID: ${{ secrets.VOLC_CR_ACCESS_KEY_ID }}
-          VOLC_CR_SECRET_ACCESS_KEY: ${{ secrets.VOLC_CR_SECRET_ACCESS_KEY }}
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          ECR_REPOSITORY: ${{ matrix.ecr_repository }}
-          ECR_DIGEST: ${{ steps.verify.outputs.digest }}
-          FIXED_TAG: ${{ steps.meta.outputs.fixed_tag }}
-          FLOATING_TAG: ${{ steps.meta.outputs.floating_tag }}
-        run: |
-          set -euo pipefail
-          # Recheck immediately before copying; CR fixed tags must also be immutable server-side.
-          python3 "$RUNNER_TEMP/cr-release.py" check
-          python3 "$RUNNER_TEMP/cr-release.py" login
-          cr_image="lobehub-enterprise-cr-cn-beijing.cr.volces.com/lobehub_enterprise_default/$CR_REPOSITORY"
-          # One source, preserve its manifest bytes instead of wrapping it in a new index.
-          docker buildx imagetools create --prefer-index=false \
-            --tag "$cr_image:$FIXED_TAG" --tag "$cr_image:$FLOATING_TAG" \
-            "$ECR_REGISTRY/$ECR_REPOSITORY@$ECR_DIGEST"
-          python3 "$RUNNER_TEMP/cr-release.py" verify
-
       - name: Build artifact registration payload
         if: matrix.token_secret != ''
         env:
@@ -626,9 +447,3 @@ jobs:
               exit 1
               ;;
           esac
-
-      - name: Clean up CR credentials and helper
-        if: always() && matrix.cr_repository != ''
-        run: |
-          docker logout lobehub-enterprise-cr-cn-beijing.cr.volces.com >/dev/null 2>&1 || true
-          rm -f "$RUNNER_TEMP/cr-release.py"
